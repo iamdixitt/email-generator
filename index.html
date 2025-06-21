@@ -27,6 +27,7 @@
     <div class="tabs">
       <div class="tab active" onclick="switchTab('generator')">Email Generator</div>
       <div class="tab" onclick="switchTab('templates')">Templates</div>
+      <div class="tab" onclick="switchTab('subjects')">Subjects</div>
     </div>
 
     <div id="generator" class="tab-content active">
@@ -41,17 +42,29 @@
       <label for="jobRole">Job Role</label>
       <input type="text" id="jobRole" placeholder="Enter job role" />
 
+      <label for="email">Email</label>
+      <input type="email" id="email" placeholder="Enter recipient email" />
+
+      <label for="subject">Subject Template</label>
+      <select id="subject"></select>
+
       <label for="template">Template Type</label>
       <select id="template"></select>
 
       <button onclick="generateEmail()">Generate Email</button>
-      <button onclick="saveToSheet()">Save to Sheet ✅</button>
       <button onclick="copyEmail()">📋 Copy Email</button>
+      <button onclick="copySubject()">📋 Copy Subject</button>
       <button onclick="loadFromSheet()">🔄 Sync from Sheet</button>
       <button onclick="loadTemplatesFromSheet()">🔄 Sync Templates</button>
+      <button onclick="loadSubjectsFromSheet()">🔄 Sync Subjects</button>
 
       <label for="output">Generated Email</label>
       <textarea id="output" readonly></textarea>
+
+      <label for="generatedSubject">Generated Subject</label>
+      <input type="text" id="generatedSubject" readonly />
+
+      <button onclick="sendEmail()">📤 Send Email</button>
 
       <table id="sheet">
         <thead>
@@ -59,6 +72,7 @@
             <th>Name</th>
             <th>Company</th>
             <th>Job Role</th>
+            <th>Email</th>
             <th>Template Type</th>
             <th>Email Output</th>
             <th>Status</th>
@@ -83,14 +97,24 @@
         <tbody id="templateTable"></tbody>
       </table>
     </div>
+
+    <div id="subjects" class="tab-content">
+      <h3>Manage Subjects</h3>
+      <table>
+        <thead><tr><th>Subject Line</th></tr></thead>
+        <tbody id="subjectTable"></tbody>
+      </table>
+    </div>
   </div>
 
   <script>
     let templates = {};
+    let subjects = [];
 
     const sheetId = '1WYTVb-PJXGQ9Rob00FDHUv6ptERRh_Am3tCpCmbkQlI';
     const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
     const templateSheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?sheet=Templates&tqx=out:json`;
+    const subjectSheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?sheet=Subjects&tqx=out:json`;
 
     function switchTab(id) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -111,123 +135,151 @@
       updateTemplateTable();
     }
 
+    function loadTemplatesFromSheet() {
+      fetch(templateSheetUrl)
+        .then(res => res.text())
+        .then(text => {
+          try {
+            const json = JSON.parse(text.substr(47).slice(0, -2));
+            templates = {};
+            json.table.rows.forEach(row => {
+              const key = row.c[0]?.v || '';
+              const val = row.c[1]?.v || '';
+              if (key && val) templates[key] = val;
+            });
+            loadTemplateOptions();
+          } catch (err) {
+            console.error('Template sync error: Could not parse Google Sheet response', err);
+          }
+        })
+        .catch(err => console.error('Template sync error:', err));
+    }
+
+    function loadSubjectsFromSheet() {
+      fetch(subjectSheetUrl)
+        .then(res => res.text())
+        .then(text => {
+          try {
+            const json = JSON.parse(text.substr(47).slice(0, -2));
+            subjects = [];
+            const subjectSelect = document.getElementById('subject');
+            const subjectTable = document.getElementById('subjectTable');
+            subjectSelect.innerHTML = '';
+            subjectTable.innerHTML = '';
+
+            json.table.rows.forEach(row => {
+              const subject = row.c[0]?.v || '';
+              if (subject) {
+                subjects.push(subject);
+                const option = document.createElement('option');
+                option.value = subject;
+                option.textContent = subject;
+                subjectSelect.appendChild(option);
+
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.textContent = subject;
+                tr.appendChild(td);
+                subjectTable.appendChild(tr);
+              }
+            });
+          } catch (err) {
+            console.error('Subject sync error: Could not parse Google Sheet response', err);
+          }
+        })
+        .catch(err => console.error('Subject sync error:', err));
+    }
+
+    function loadFromSheet() {
+      fetch(sheetUrl)
+        .then(res => res.text())
+        .then(text => {
+          try {
+            const json = JSON.parse(text.substr(47).slice(0, -2));
+            const tbody = document.querySelector("#sheet tbody");
+            tbody.innerHTML = '';
+
+            json.table.rows.forEach(row => {
+              const name = row.c[0]?.v || '';
+              const company = row.c[1]?.v || '';
+              const jobRole = row.c[2]?.v || '';
+              const email = row.c[3]?.v || '';
+              const templateType = row.c[4]?.v || '';
+
+              const tr = document.createElement('tr');
+              [name, company, jobRole, email, templateType].forEach(text => {
+                const td = document.createElement('td');
+                td.textContent = text;
+                td.onclick = () => {
+                  document.getElementById('name').value = name;
+                  document.getElementById('company').value = company;
+                  document.getElementById('jobRole').value = jobRole;
+                  document.getElementById('email').value = email;
+                  document.getElementById('template').value = templateType;
+                  generateEmail();
+                };
+                tr.appendChild(td);
+              });
+
+              const emailTd = document.createElement('td');
+              emailTd.textContent = "—";
+              tr.appendChild(emailTd);
+
+              const tickTd = document.createElement('td');
+              tickTd.innerHTML = "✔️";
+              tickTd.classList.add('checkmark');
+              tr.appendChild(tickTd);
+
+              tbody.appendChild(tr);
+            });
+          } catch (err) {
+            console.error("Error loading sheet: Could not parse Google Sheet response", err);
+          }
+        })
+        .catch(err => console.error("Error loading sheet:", err));
+    }
+
     function generateEmail() {
       const name = document.getElementById('name').value;
       const company = document.getElementById('company').value;
       const jobRole = document.getElementById('jobRole').value;
+      const subjectTemplate = document.getElementById('subject').value;
       const templateType = document.getElementById('template').value;
       let template = templates[templateType] || '';
 
-      template = template.replaceAll("{{Name}}", name)
+      const filledBody = template.replaceAll("{{Name}}", name)
                          .replaceAll("{{Company}}", company)
                          .replaceAll("{{Job Role}}", jobRole);
 
-      document.getElementById('output').value = template;
-    }
+      const filledSubject = subjectTemplate.replaceAll("{{Name}}", name)
+                         .replaceAll("{{Company}}", company)
+                         .replaceAll("{{Job Role}}", jobRole);
 
-    function addRowToSheet(name, company, jobRole, templateType) {
-      const generatedEmail = (templates[templateType] || '')
-        .replaceAll("{{Name}}", name)
-        .replaceAll("{{Company}}", company)
-        .replaceAll("{{Job Role}}", jobRole);
-
-      const table = document.getElementById('sheet').querySelector('tbody');
-      const row = table.insertRow();
-      row.insertCell(0).textContent = name;
-      row.insertCell(1).textContent = company;
-      row.insertCell(2).textContent = jobRole;
-      row.insertCell(3).textContent = templateType;
-      row.insertCell(4).textContent = generatedEmail;
-      row.insertCell(5).innerHTML = '<span class="checkmark">✔</span>';
-
-      row.addEventListener('click', () => {
-        document.getElementById('name').value = name;
-        document.getElementById('company').value = company;
-        document.getElementById('jobRole').value = jobRole;
-        document.getElementById('template').value = templateType;
-        generateEmail();
-      });
-    }
-
-    function saveToSheet() {
-      const name = document.getElementById('name').value;
-      const company = document.getElementById('company').value;
-      const jobRole = document.getElementById('jobRole').value;
-      const templateType = document.getElementById('template').value;
-      const email = document.getElementById('output').value;
-
-      if (!name || !company || !jobRole || !email) {
-        alert("Please generate an email before saving.");
-        return;
-      }
-
-      addRowToSheet(name, company, jobRole, templateType);
+      document.getElementById('output').value = filledBody;
+      document.getElementById('generatedSubject').value = filledSubject;
     }
 
     function copyEmail() {
-      const output = document.getElementById('output');
-      output.select();
-      output.setSelectionRange(0, 99999);
-      document.execCommand("copy");
-      alert("Email copied to clipboard ✅");
+      navigator.clipboard.writeText(document.getElementById('output').value);
     }
 
-    function loadFromSheet() {
-      const tbody = document.getElementById('sheet').querySelector('tbody');
-      tbody.innerHTML = '';
-      fetch(sheetUrl)
-        .then(response => response.text())
-        .then(text => {
-          const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\((.*)\)/s)[1]);
-          const rows = json.table.rows;
-          rows.forEach(row => {
-            const [name, company, jobRole, templateType] = row.c.map(c => c ? c.v : '');
-            addRowToSheet(name, company, jobRole, templateType);
-          });
-        })
-        .catch(error => console.error("Error loading sheet:", error));
+    function copySubject() {
+      navigator.clipboard.writeText(document.getElementById('generatedSubject').value);
     }
 
-    function loadTemplatesFromSheet() {
-      fetch(templateSheetUrl)
-        .then(response => response.text())
-        .then(text => {
-          const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\((.*)\)/s)[1]);
-          const rows = json.table.rows;
-          templates = {};
-          rows.forEach(row => {
-            const [key, content] = row.c.map(c => c ? c.v : '');
-            if (key && content) templates[key] = content;
-          });
-          loadTemplateOptions();
-        })
-        .catch(err => console.error("Template load error:", err));
+    function sendEmail() {
+      const recipient = document.getElementById('email').value;
+      const subject = document.getElementById('generatedSubject').value;
+      const body = document.getElementById('output').value;
+      if (!recipient || !subject || !body) return alert("Please fill in all fields before sending.");
+      const mailtoLink = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.location.href = mailtoLink;
     }
 
-    function addTemplate() {
-      const key = document.getElementById('templateKey').value.trim();
-      const content = document.getElementById('templateContent').value.trim();
-      if (!key || !content) return alert("Template name and body are required.");
-      templates[key] = content;
-      loadTemplateOptions();
-      document.getElementById('templateKey').value = '';
-      document.getElementById('templateContent').value = '';
-    }
-
-    function updateTemplateTable() {
-      const table = document.getElementById('templateTable');
-      table.innerHTML = '';
-      for (const key in templates) {
-        const row = table.insertRow();
-        row.insertCell(0).textContent = key;
-        row.insertCell(1).textContent = templates[key];
-      }
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
+    window.onload = function () {
       loadTemplatesFromSheet();
-      loadFromSheet();
-    });
+      loadSubjectsFromSheet();
+    };
   </script>
 </body>
 </html>
